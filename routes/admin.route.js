@@ -18,6 +18,7 @@ const { getUserCurrency } = require('../utils/currency');
 const frontendUrl = () => String(process.env.FRONTEND_URL || '').replace(/\/$/, '');
 
 function safeUser(u) {
+  const cur = getUserCurrency(u);
   return {
     _id: u._id,
     id: u._id,
@@ -37,6 +38,8 @@ function safeUser(u) {
     account_verify: u.account_verify,
     isBlocked: Boolean(u.isBlocked),
     account_tier: u.account_tier || 'Tier 1',
+    currency_code: cur.code,
+    currency_symbol: cur.symbol,
     createdAt: u.createdAt,
   };
 }
@@ -153,21 +156,23 @@ router.post('/fund', async (req, res) => {
 
     const title = 'INWARD TRANSFER';
     const status = type === 'credit' ? 'Successful' : 'In Progress';
+    const fundSym = getUserCurrency(user).symbol;
     await Transaction.create({
       user_id: user._id,
       type,
       title,
       amount: amt,
+      currency: fundSym,
       status,
-      description: type === 'credit' ? `Account credited $${amt}` : `Account debited $${amt}`,
+      description: type === 'credit' ? `Account credited ${fundSym}${amt}` : `Account debited ${fundSym}${amt}`,
       meta: { byAdmin: req.user?._id },
     });
 
     const notifTitle = type === 'credit' ? 'Account credited' : 'Account Debited';
     const notifMsg =
       type === 'credit'
-        ? `Your account has been credited $${amt}`
-        : `Your account has been debited $${amt}`;
+        ? `Your account has been credited ${fundSym}${amt}`
+        : `Your account has been debited ${fundSym}${amt}`;
     const actionUrl = '/user/notifications.html';
 
     await Notification.create({
@@ -266,11 +271,12 @@ router.get('/deposits', async (req, res) => {
   try {
     const list = await Deposit.find({})
       .sort({ createdAt: -1 })
-      .populate('user_id', 'first_name last_name name email username')
+      .populate('user_id', 'first_name last_name name email username country currency_code currency_symbol')
       .lean();
     const deposits = list.map((d) => {
       const u = d.user_id || {};
       const fullName = u.name || [u.first_name, u.last_name].filter(Boolean).join(' ') || '—';
+      const cur = getUserCurrency(u);
       return {
         _id: d._id,
         user_id: u._id || d.user_id,
@@ -283,6 +289,16 @@ router.get('/deposits', async (req, res) => {
         proof_url: d.proof_url,
         status: d.status,
         createdAt: d.createdAt,
+        currency_code: cur.code,
+        currency_symbol: cur.symbol,
+        user: {
+          _id: u._id,
+          name: fullName,
+          email: u.email || '',
+          country: u.country || '',
+          currency_code: cur.code,
+          currency_symbol: cur.symbol,
+        },
       };
     });
     return res.json({ success: true, deposits, count: deposits.length });
@@ -312,11 +328,13 @@ router.post('/deposits/:id/approve', async (req, res) => {
         type: 'credit',
         title: 'CRYPTO DEPOSIT',
         amount: deposit.amount,
+        currency: getUserCurrency(user).symbol,
         status: 'Successful',
         description: `Crypto deposit approved (${deposit.crypto_type || 'crypto'})`,
       });
+      const depSym = getUserCurrency(user).symbol;
       const notifTitle = 'Deposit Approved';
-      const notifMsg = `Your deposit of $${deposit.amount} has been approved and credited to your account.`;
+      const notifMsg = `Your deposit of ${depSym}${deposit.amount} has been approved and credited to your account.`;
       await Notification.create({
         user_id: user._id,
         type: 'deposit',
@@ -353,8 +371,9 @@ router.post('/deposits/:id/reject', async (req, res) => {
 
     const user = await User.findById(deposit.user_id);
     if (user) {
+      const depSymR = getUserCurrency(user).symbol;
       const notifTitle = 'Deposit Rejected';
-      const notifMsg = `Your deposit of $${deposit.amount} was rejected. Contact support if you need help.`;
+      const notifMsg = `Your deposit of ${depSymR}${deposit.amount} was rejected. Contact support if you need help.`;
       await Notification.create({
         user_id: user._id,
         type: 'deposit',
@@ -447,9 +466,20 @@ router.get('/transfers', async (req, res) => {
   try {
     const list = await Transfer.find({})
       .sort({ createdAt: -1 })
-      .populate('user_id', 'first_name last_name name email username')
+      .populate('user_id', 'first_name last_name name email username country currency_code currency_symbol')
       .lean();
-    return res.json({ success: true, transfers: list });
+    const transfers = list.map((t) => {
+      const u = t.user_id || {};
+      const cur = getUserCurrency(u);
+      return {
+        ...t,
+        currency_symbol: cur.symbol,
+        currency_code: cur.code,
+        user_currency_symbol: cur.symbol,
+        user_currency_code: cur.code,
+      };
+    });
+    return res.json({ success: true, transfers });
   } catch (err) {
     return res.status(500).json({ success: false, message: err.message });
   }
@@ -650,7 +680,7 @@ router.get('/cards', async (req, res) => {
   try {
     const types = await CardType.find().sort({ createdAt: -1 }).lean();
     const cards = await Card.find()
-      .populate('user_id', 'name first_name last_name email username')
+      .populate('user_id', 'name first_name last_name email username country currency_code currency_symbol')
       .populate('card_type_id')
       .sort({ createdAt: -1 })
       .lean();
@@ -1060,11 +1090,22 @@ router.delete('/loan-plans/:id', async (req, res) => {
 router.get('/loans', async (req, res) => {
   try {
     const plans = await LoanPlan.find().sort({ createdAt: -1 }).lean();
-    const loans = await Loan.find()
-      .populate('user_id', 'name first_name last_name email username')
+    const loansRaw = await Loan.find()
+      .populate('user_id', 'name first_name last_name email username country currency_code currency_symbol')
       .populate('plan_id')
       .sort({ createdAt: -1 })
       .lean();
+    const loans = loansRaw.map((l) => {
+      const u = l.user_id || {};
+      const cur = getUserCurrency(u);
+      return {
+        ...l,
+        currency_symbol: cur.symbol,
+        currency_code: cur.code,
+        user_currency_symbol: cur.symbol,
+        user_currency_code: cur.code,
+      };
+    });
     return res.json({
       success: true,
       plans,
