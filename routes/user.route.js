@@ -15,6 +15,7 @@ const CardType = require('../models/CardType');
 const CardTransaction = require('../models/CardTransaction');
 const Deposit = require('../models/Deposit');
 const CryptoWallet = require('../models/CryptoWallet');
+const { getCurrencyForCountry, getUserCurrency, getClientIp } = require('../utils/currency');
 const frontendUrl = () => String(process.env.FRONTEND_URL || '').replace(/\/$/, '');
 
 const BIRD_API_KEY = process.env.BIRD_API_KEY || '';
@@ -175,7 +176,13 @@ router.post('/verification', async (req, res) => {
       user.verificationStatus = 'pending';
       user.account_verify = 'Pending';
       if (body.phone) user.phone = body.phone;
-      if (body.country) user.country = body.country;
+      if (body.country) {
+        user.country = body.country;
+        // KYC country is the first priority for currency symbol/code
+        const cur = getCurrencyForCountry(body.country);
+        user.currency_code = cur.code;
+        user.currency_symbol = cur.symbol;
+      }
       if (photoUrl) user.image = photoUrl;
       await user.save();
     }
@@ -195,6 +202,9 @@ router.post('/verification', async (req, res) => {
             image: user.image,
             verificationStatus: user.verificationStatus,
             role: user.role,
+            country: user.country,
+            currency_code: user.currency_code,
+            currency_symbol: user.currency_symbol,
           }
         : null,
     });
@@ -242,7 +252,7 @@ router.get('/dashboard', async (req, res) => {
           type: 'credit',
           title: 'Loan Disbursement',
           amount: amt,
-          currency: '$',
+          currency: getUserCurrency(req.user).symbol,
           status: 'Successful',
           description: 'Loan approved and disbursed',
           meta: { loan_id: lid, source: 'loan-approve' },
@@ -275,6 +285,8 @@ router.get('/dashboard', async (req, res) => {
             verificationStatus: req.user.verificationStatus,
             phone: req.user.phone,
             country: req.user.country,
+            currency_code: getUserCurrency(req.user).code,
+            currency_symbol: getUserCurrency(req.user).symbol,
           }
         : null,
     });
@@ -395,8 +407,8 @@ router.post('/deposit/crypto', async (req, res) => {
 
     const notifTitle = purpose === 'upgrade' ? 'Upgrade Submitted' : 'Deposit Submitted';
     const notifMsg = purpose === 'upgrade'
-      ? `Your upgrade payment of $${amount} is under review`
-      : `Your deposit of $${amount} is under review`;
+      ? `Your upgrade payment of ${getUserCurrency(req.user).symbol}${amount} is under review`
+      : `Your deposit of ${getUserCurrency(req.user).symbol}${amount} is under review`;
     await Notification.create({
       user_id: req.user._id,
       type: 'deposit',
@@ -456,7 +468,7 @@ router.post('/deposit/:id/approve', async (req, res) => {
       try {
         await sendPushToUser(user, {
           title: 'Deposit confirmed',
-          body: `Your deposit of $${deposit.amount} has been successfully processed.`,
+          body: `Your deposit of ${getUserCurrency(user).symbol}${deposit.amount} has been successfully processed.`,
           url: '/user/dashboard.html',
           tag: 'deposit-confirmed',
         });
@@ -490,7 +502,7 @@ router.post('/transfer', async (req, res) => {
     const body = req.body || {};
     const bank = String(body.bank || '').trim();
     const swift = String(body.swift || '').trim();
-    const currency = String(body.currency || 'USD').trim() || 'USD';
+    const currency = String(body.currency || getUserCurrency(req.user).symbol || getUserCurrency(req.user).code || 'USD').trim() || 'USD';
     const routing = String(body.routing || '').trim();
     const country = String(body.country || '').trim();
     const account_no = String(body.act_no || body.account_no || '').trim();
@@ -563,7 +575,7 @@ router.post('/transfer', async (req, res) => {
     });
 
     const notifTitle = 'Transfer initiated';
-    const notifMsg = `Your Transfer of $${amount} is under review`;
+    const notifMsg = `Your Transfer of ${getUserCurrency(req.user).symbol}${amount} is under review`;
     await Notification.create({
       user_id: user._id,
       type: 'transfer',

@@ -57,6 +57,10 @@ const userSchema = new mongoose.Schema(
     gender: { type: String, enum: ['Female', 'Male', 'Others', ''], default: '' },
     country: { type: String, trim: true, default: '' },
     currency_code: { type: String, uppercase: true, trim: true, default: 'USD' },
+    currency_symbol: { type: String, trim: true, default: '$' },
+    // Collected at registration; used for IP-country awareness (KYC country still has priority for currency)
+    registration_ip: { type: String, trim: true, default: '' },
+    ip_country: { type: String, trim: true, default: '' },
     role: { type: String, enum: [roles.admin, roles.moderator, roles.client], default: roles.client },
 
     // Account / balance fields

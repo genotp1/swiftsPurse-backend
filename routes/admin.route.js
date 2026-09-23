@@ -13,6 +13,7 @@ const LoanPlan = require('../models/LoanPlan');
 const CardType = require('../models/CardType');
 const CardTransaction = require('../models/CardTransaction');
 const { sendPushToUser } = require('../utils/pushNotifications');
+const { getUserCurrency } = require('../utils/currency');
 
 const frontendUrl = () => String(process.env.FRONTEND_URL || '').replace(/\/$/, '');
 
@@ -500,7 +501,8 @@ router.post('/transfers/:id/approve', async (req, res) => {
     }
 
     const notifTitle = 'Transfer Successful';
-    const notifMsg = `Your transfer of $${amt} was successful. Your new balance is $${user.balance}.`;
+    const _sym = getUserCurrency(user).symbol;
+    const notifMsg = `Your transfer of ${_sym}${amt} was successful. Your new balance is ${_sym}${user.balance}.`;
     await Notification.create({
       user_id: user._id,
       type: 'transfer',
@@ -591,7 +593,8 @@ router.post('/transfers/:id/reject', async (req, res) => {
     if (user) {
       const amt = Number(tx.amount || 0);
       const notifTitle = 'Transfer Rejected';
-      const notifMsg = `Your transfer of $${amt} was rejected. Contact support if you need help.`;
+      const _symR = getUserCurrency(user).symbol;
+      const notifMsg = `Your transfer of ${_symR}${amt} was rejected. Contact support if you need help.`;
       await Notification.create({
         user_id: user._id,
         type: 'transfer',
@@ -1109,7 +1112,7 @@ router.post('/loans/:id/approve', async (req, res) => {
         type: 'credit',
         title: 'Loan Disbursement',
         amount: amount,
-        currency: '$',
+        currency: (user && getUserCurrency(user).symbol) || '$',
         status: 'Successful',
         description: `Loan approved and disbursed (${loan.plan_id && loan.plan_id.name ? loan.plan_id.name : 'Loan'})`,
         meta: { loan_id: String(loan._id), source: 'loan-approve' },
@@ -1123,7 +1126,7 @@ router.post('/loans/:id/approve', async (req, res) => {
         user_id: user._id,
         type: 'loan',
         title: 'Loan Approved',
-        message: `Your loan of $${amount.toFixed(2)} has been approved and credited to your account.`,
+        message: `Your loan of ${getUserCurrency(user).symbol}${amount.toFixed(2)} has been approved and credited to your account.`,
         icon: 'bell',
         action_url: '/user/loan.html',
         data: { loanId: loan._id },
@@ -1133,7 +1136,7 @@ router.post('/loans/:id/approve', async (req, res) => {
       const { sendPushToUser } = require('../utils/pushNotifications');
       await sendPushToUser(user, {
         title: 'Loan Approved',
-        body: `Your loan of $${amount.toFixed(2)} has been approved and credited.`,
+        body: `Your loan of ${getUserCurrency(user).symbol}${amount.toFixed(2)} has been approved and credited.`,
         url: '/user/loan.html',
         tag: 'loan-approved',
       });
@@ -1158,7 +1161,7 @@ router.post('/loans/:id/reject', async (req, res) => {
         user_id: loan.user_id._id,
         type: 'loan',
         title: 'Loan Rejected',
-        message: `Your loan application for $${featureNum(loan.amount).toFixed(2)} was rejected.`,
+        message: `Your loan application for ${getUserCurrency(loan.user_id).symbol}${featureNum(loan.amount).toFixed(2)} was rejected.`,
         icon: 'bell',
         action_url: '/user/loan.html',
         data: { loanId: loan._id },

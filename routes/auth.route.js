@@ -3,6 +3,7 @@ const crypto = require('crypto');
 const { validationResult } = require('express-validator');
 const User = require('../models/user.model');
 const { registerValidator } = require('../utils/validators');
+const { getClientIp, resolveIpCountry, getCurrencyForCountry, getUserCurrency } = require('../utils/currency');
 const { createToken, maxAge, requireAuth, getTokenFromReq, JWT_SECRET } = require('../utils/authMiddleware');
 const { getPushConfig, sendPushToUser } = require('../utils/pushNotifications');
 
@@ -151,6 +152,11 @@ router.post('/register', async (req, res) => {
       return res.status(409).json({ success: false, message: 'Email or username already registered' });
     }
     const account_no = 'SP' + Date.now().toString().slice(-10);
+    const registration_ip = getClientIp(req);
+    let ip_country = '';
+    try {
+      ip_country = await resolveIpCountry(registration_ip);
+    } catch (_) {}
     const user = await User.create({
       first_name: String(first_name).trim(),
       last_name: String(last_name).trim(),
@@ -160,6 +166,11 @@ router.post('/register', async (req, res) => {
       account_no,
       verificationStatus: 'not_verified',
       isVerified: false,
+      registration_ip: registration_ip || '',
+      ip_country: ip_country || '',
+      // Currency remains default until KYC country is set (KYC country is priority)
+      currency_code: 'USD',
+      currency_symbol: '$',
     });
     const code = String(Math.floor(10000 + Math.random() * 90000));
     otpStore.set(user.email, { code, expires: Date.now() + 30 * 60 * 1000, userId: String(user._id) });
@@ -169,6 +180,14 @@ router.post('/register', async (req, res) => {
       console.error('Register email error:', mailErr.message);
     }
     const token = createToken(user._id);
+    const sameSite = process.env.COOKIE_SAMESITE || (process.env.NODE_ENV === 'production' ? 'none' : 'lax');
+    res.cookie('jwt', token, {
+      httpOnly: true,
+      maxAge: maxAge * 1000,
+      sameSite,
+      secure: sameSite === 'none' || process.env.NODE_ENV === 'production',
+      path: '/',
+    });
     return res.status(201).json({
       success: true,
       message: 'Account created. Verification email sent.',
@@ -374,6 +393,7 @@ router.get('/me', requireAuth, async (req, res) => {
   try {
     const user = req.user;
     if (!user) return res.status(401).json({ success: false, message: 'Not authenticated' });
+    const cur = getUserCurrency(user);
     return res.json({
       _id: user._id,
       id: user._id,
@@ -392,6 +412,10 @@ router.get('/me', requireAuth, async (req, res) => {
       account_tier: user.account_tier || 'Tier 1',
       phone: user.phone,
       country: user.country,
+      currency_code: cur.code,
+      currency_symbol: cur.symbol,
+      registration_ip: user.registration_ip || '',
+      ip_country: user.ip_country || '',
     });
   } catch (err) {
     return res.status(500).json({ success: false, message: err.message || 'Failed to load user' });
